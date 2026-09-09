@@ -23,8 +23,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install system dependencies and Amiri font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-hosny-amiri fontconfig
+          echo "[+] Amiri fonts installed:"
+          fc-list | grep -i "Amiri" | head -n 10
 
       - name: Install Python dependencies
         run: pip install requests mutagen pillow arabic_reshaper python-bidi
@@ -35,6 +39,16 @@ jobs:
           tar -xzf resvg.tar.gz
           find . -type f -name resvg -exec chmod +x {} \;
           echo "$(dirname "$(find . -type f -name resvg | head -n 1)")" >> "$GITHUB_PATH"
+
+      - name: Verify Quran Arabic font
+        run: |
+          python - <<'PY'
+          from PIL import ImageFont
+          path = "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf"
+          font = ImageFont.truetype(path, 54)
+          print(f"[OK] Arabic font loaded: {path}")
+          print(f"[OK] Test bbox: {font.getbbox('بِسْمِ اللَّهِ')}")
+          PY
 
       - name: Render Surah with Husary
         run: |
