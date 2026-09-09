@@ -4,7 +4,7 @@ quran_final_v3.py
 مولد فيديوهات القرآن الطويلة.
 
 الإعدادات الافتراضية:
-  - المقرئ: الحصري (ar.husary)
+  - المقرئ: الحصري (ar.abdulsamad)
   - الخط: Amiri / Amiri-Bold
   - لا يتم حذف أو قص أي صمت من التسجيلات.
 
@@ -417,7 +417,7 @@ def build(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--surah", type=int, required=True)
-    parser.add_argument("--reciter", type=str, default="ar.husary")
+    parser.add_argument("--reciter", type=str, default="ar.abdulsamad")
     parser.add_argument("--svg", type=str, default="assets/Tile-Derivative-8.svg")
     parser.add_argument("--out", type=str, default="quran_v3.mp4")
     parser.add_argument(
