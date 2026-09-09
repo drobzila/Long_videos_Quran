@@ -1,25 +1,17 @@
 """
-quran_final_v3.py (مصلح)
--------------------------
-النسخة الأصلية: وردة كبيرة دوارة بالمنتصف بالخلفية + صندوق الآية فوقها،
-مع Text Fade In/Out لكل آية، واستمرارية حركة الخلفية عبر كل الآيات.
+quran_final_v3.py
+-----------------
+مولد فيديوهات القرآن الطويلة.
 
-الإصلاح الرئيسي عن النسخة السابقة:
-  - ProcessPoolExecutor بدل ThreadPoolExecutor: رسم PIL عملية CPU-bound
-    خالصة بلغة بايثون، والـ GIL يمنع الـ threads من التوازي الحقيقي عليها.
-    processes حقيقية تعطي تسريع فعلي على الأنوية المتعددة.
-  - كل process يحمّل motif/base_bg مرة وحدة فقط (عبر initializer) بدل ما
-    يتبعثوا (pickle) مع كل مهمة — أرخص بزاف لصور 1920×1080.
-  - كاش على تحميل الخط (lru_cache) بدل فتح الملف من القرص كل إطار.
+الإعدادات الافتراضية:
+  - المقرئ: الحصري (ar.husary)
+  - الخط: Amiri / Amiri-Bold
+  - لا يتم حذف أو قص أي صمت من التسجيلات.
 
 المتطلبات:
-    pip install requests mutagen pillow arabic_reshaper python-bidi --break-system-packages
+    pip install requests mutagen pillow arabic_reshaper python-bidi
     resvg في PATH أو عبر RESVG_BIN
     ffmpeg في PATH
-
-الاستخدام:
-    python quran_final_v3.py --surah 108 --reciter ar.abdulsamad --svg assets/Tile-Derivative-8.svg --out surah108.mp4
-    python quran_final_v3.py --surah 108 --gpu nvidia --out surah108.mp4
 """
 
 import argparse
@@ -66,6 +58,9 @@ BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِ
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
 
+# يمكن تحديد مسار خط مخصص عبر QURAN_FONT.
+QURAN_FONT = os.environ.get("QURAN_FONT", "")
+
 
 @dataclass
 class Ayah:
@@ -91,6 +86,7 @@ def download_one(ayah: Ayah):
             for chunk in r.iter_content(chunk_size=1024 * 64):
                 if chunk:
                     f.write(chunk)
+    # نستخدم المدة الأصلية كاملة، بدون حذف الصمت.
     ayah.duration = MP3(ayah.audio_path).info.length
     return ayah
 
@@ -98,9 +94,8 @@ def download_one(ayah: Ayah):
 def download_all_parallel(ayahs, max_workers=8):
     os.makedirs(AUDIO_DIR, exist_ok=True)
     with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        # هنا Thread عادي وكافي: التحميل I/O-bound (شبكة)، مش CPU-bound
         futures = [ex.submit(download_one, a) for a in ayahs]
-        for i, fut in enumerate(cf.as_completed(futures)):
+        for fut in cf.as_completed(futures):
             fut.result()
 
 
@@ -132,20 +127,34 @@ def shape_arabic(text: str) -> str:
 
 @functools.lru_cache(maxsize=None)
 def load_font(size: int):
+    # ترتيب الأولوية: متغير البيئة، ثم Amiri المثبت على Linux، ثم Windows،
+    # ثم نسخة الخط داخل المستودع إن وجدت.
     candidates = [
-        "Amiri-Bold.ttf",
+        QURAN_FONT,
         "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf",
+        "/usr/share/fonts/truetype/amiri/Amiri-Regular.ttf",
+        "/usr/share/fonts/opentype/amiri/Amiri-Bold.ttf",
+        "/usr/share/fonts/opentype/amiri/Amiri-Regular.ttf",
+        "assets/Amiri-Bold.ttf",
+        "assets/Amiri-Regular.ttf",
+        "Amiri-Bold.ttf",
+        "Amiri-Regular.ttf",
         "C:/Windows/Fonts/amiri-bold.ttf",
-        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/amiri-regular.ttf",
     ]
-    for c in candidates:
-        if os.path.exists(c):
-            return ImageFont.truetype(c, size)
-    return ImageFont.load_default()
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return ImageFont.truetype(candidate, size)
+
+    raise RuntimeError(
+        "لم يتم العثور على خط عربي Amiri. "
+        "ثبّت fonts-hosny-amiri على Ubuntu أو حدّد QURAN_FONT."
+    )
 
 
 def build_base_cached_background(w, h) -> Image.Image:
-    """تجهيز الخلفية المتدرجة + الصندوق الزجاجي والظل مرة واحدة فقط بالذاكرة."""
+    """تجهيز الخلفية المتدرجة + الصندوق الزجاجي والظل مرة واحدة فقط."""
     img = Image.new("RGBA", (w, h))
     draw = ImageDraw.Draw(img)
     for y in range(h):
@@ -162,15 +171,24 @@ def build_base_cached_background(w, h) -> Image.Image:
 
     shadow_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(shadow_layer)
-    sdraw.rounded_rectangle((x0, y0 + 14, x0 + box_w, y0 + box_h + 14), radius=BOX_RADIUS, fill=(20, 60, 25, 90))
+    sdraw.rounded_rectangle(
+        (x0, y0 + 14, x0 + box_w, y0 + box_h + 14),
+        radius=BOX_RADIUS,
+        fill=(20, 60, 25, 90),
+    )
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(22))
     img.alpha_composite(shadow_layer)
 
     box_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     bdraw = ImageDraw.Draw(box_layer)
-    bdraw.rounded_rectangle(box_rect, radius=BOX_RADIUS, fill=BOX_FILL, outline=BOX_BORDER, width=BOX_BORDER_WIDTH)
+    bdraw.rounded_rectangle(
+        box_rect,
+        radius=BOX_RADIUS,
+        fill=BOX_FILL,
+        outline=BOX_BORDER,
+        width=BOX_BORDER_WIDTH,
+    )
     img.alpha_composite(box_layer)
-
     return img
 
 
@@ -180,8 +198,6 @@ _W_BASE_BG = None
 
 
 def _worker_init(svg_path: str):
-    """يشتغل مرة وحدة لكل process عند إنشائه: يحمّل motif/base_bg محلياً
-    في ذاكرة الـ process، بدل ما يتبعثوا (pickle) مع كل مهمة."""
     global _W_MOTIF, _W_BASE_BG
     _W_MOTIF = load_colored_motif(svg_path)
     _W_BASE_BG = build_base_cached_background(WIDTH, HEIGHT)
@@ -215,6 +231,7 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
         bbox = draw.textbbox((0, 0), shaped_main, font=font_main)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         max_w = box_w - 100
+
         while tw > max_w and font_size > 20:
             font_size -= 2
             font_main = load_font(font_size)
@@ -223,13 +240,23 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
 
         alpha_val = int(255 * text_opacity)
         cx, cy = WIDTH / 2, HEIGHT / 2 - 25
-        draw.text((cx - tw / 2, cy - th / 2), shaped_main, font=font_main, fill=TEXT_COLOR + (alpha_val,))
+        draw.text(
+            (cx - tw / 2, cy - th / 2),
+            shaped_main,
+            font=font_main,
+            fill=TEXT_COLOR + (alpha_val,),
+        )
 
         shaped_info = shape_arabic(info_text)
         font_info = load_font(24)
         ibbox = draw.textbbox((0, 0), shaped_info, font=font_info)
         iw = ibbox[2] - ibbox[0]
-        draw.text((cx - iw / 2, cy + th / 2 + 28), shaped_info, font=font_info, fill=INFO_COLOR + (alpha_val,))
+        draw.text(
+            (cx - iw / 2, cy + th / 2 + 28),
+            shaped_info,
+            font=font_info,
+            fill=INFO_COLOR + (alpha_val,),
+        )
 
         frame.alpha_composite(text_layer)
 
@@ -237,14 +264,24 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
 
 
 # ----------------------------------------------------------- المحرك الرئيسي ---
-def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_accel: str = "none"):
+def build(
+    surah_number: int,
+    reciter: str,
+    svg_path: str,
+    out_path: str,
+    gpu_accel: str = "none",
+):
     print(f"[*] جلب بيانات سورة رقم {surah_number}...")
     data = fetch_surah_data(surah_number, reciter)
     surah_name = data["name"]
 
     ayahs = [
-        Ayah(number_in_surah=a["numberInSurah"], text=a["text"], audio_url=a["audio"],
-             audio_path=os.path.join(AUDIO_DIR, f"ayah_{a['numberInSurah']}.mp3"))
+        Ayah(
+            number_in_surah=a["numberInSurah"],
+            text=a["text"],
+            audio_url=a["audio"],
+            audio_path=os.path.join(AUDIO_DIR, f"ayah_{a['numberInSurah']}.mp3"),
+        )
         for a in data["ayahs"]
     ]
 
@@ -257,10 +294,15 @@ def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_acc
             f.write(f"file '{os.path.abspath(a.audio_path)}'\n")
 
     full_audio = os.path.join(AUDIO_DIR, "full_audio.m4a")
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-        "-c:a", "aac", full_audio  # إعادة ترميز بدل copy لتفادي طقطقة عند نقاط القطع
-    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+            "-c:a", "aac", full_audio,
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
     vcodec = "libx264"
     if gpu_accel == "nvidia":
@@ -313,13 +355,17 @@ def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_acc
             else:
                 disp_text = text
                 disp_info = info_text
-                frames_from_start = f if not has_bismillah else f - int(bismillah_dur * FPS)
+                frames_from_start = (
+                    f if not has_bismillah else f - int(bismillah_dur * FPS)
+                )
                 frames_to_end = total_ayah_frames - f
                 opacity_in = min(1.0, max(0.0, frames_from_start / fade_frames))
                 opacity_out = min(1.0, max(0.0, frames_to_end / fade_frames))
                 opacity = min(opacity_in, opacity_out)
 
-            tasks.append((global_frame_counter, global_t, disp_text, disp_info, opacity))
+            tasks.append(
+                (global_frame_counter, global_t, disp_text, disp_info, opacity)
+            )
             global_frame_counter += 1
 
     num_workers = min(os.cpu_count() or 4, 8)
@@ -327,16 +373,21 @@ def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_acc
 
     print(f"[*] المعالجة جارية بـ {num_workers} process حقيقية...")
     try:
-        with cf.ProcessPoolExecutor(max_workers=num_workers,
-                                     initializer=_worker_init,
-                                     initargs=(svg_path,)) as executor:
+        with cf.ProcessPoolExecutor(
+            max_workers=num_workers,
+            initializer=_worker_init,
+            initargs=(svg_path,),
+        ) as executor:
             for i in range(0, len(tasks), chunk_size):
                 chunk = tasks[i:i + chunk_size]
                 results = list(executor.map(render_frame_task, chunk))
                 results.sort(key=lambda x: x[0])
                 for _, frame_bytes in results:
                     process.stdin.write(frame_bytes)
-                print(f"  [تقدم العمل] {min(i + chunk_size, len(tasks))}/{len(tasks)} إطاراً")
+                print(
+                    f"  [تقدم العمل] "
+                    f"{min(i + chunk_size, len(tasks))}/{len(tasks)} إطاراً"
+                )
     finally:
         process.stdin.close()
         process.wait()
@@ -352,10 +403,15 @@ def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_acc
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--surah", type=int, required=True)
-    parser.add_argument("--reciter", type=str, default="ar.abdulsamad")
+    parser.add_argument("--reciter", type=str, default="ar.husary")
     parser.add_argument("--svg", type=str, default="assets/Tile-Derivative-8.svg")
     parser.add_argument("--out", type=str, default="quran_v3.mp4")
-    parser.add_argument("--gpu", type=str, choices=["none", "nvidia", "qsv"], default="none")
+    parser.add_argument(
+        "--gpu",
+        type=str,
+        choices=["none", "nvidia", "qsv"],
+        default="none",
+    )
     args = parser.parse_args()
 
     build(args.surah, args.reciter, args.svg, args.out, gpu_accel=args.gpu)
