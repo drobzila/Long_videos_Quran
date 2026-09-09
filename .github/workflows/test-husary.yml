@@ -37,9 +37,11 @@ jobs:
         run: |
           curl -L -o resvg.tar.gz https://github.com/linebender/resvg/releases/latest/download/resvg-linux-x86_64.tar.gz
           tar -xzf resvg.tar.gz
-          find . -type f -name resvg -exec chmod +x {} \\
-            ;
-          echo "$(dirname "$(find . -type f -name resvg | head -n 1)")" >> "$GITHUB_PATH"
+          find . -type f -name resvg -exec chmod +x {} \;
+          RESVG_PATH="$(find . -type f -name resvg | head -n 1)"
+          test -n "$RESVG_PATH"
+          echo "$(dirname "$RESVG_PATH")" >> "$GITHUB_PATH"
+          echo "[OK] resvg found at: $RESVG_PATH"
 
       - name: Verify Quran Arabic font
         run: |
@@ -53,10 +55,10 @@ jobs:
 
       - name: Render Surah with Minshawi and new motif
         run: |
-          python quran_final.py \\
-            --surah ${{ inputs.surah }} \\
-            --reciter ar.minshawi \\
-            --svg assets/Tile-Derivative-9.svg \\
+          python quran_final.py \
+            --surah ${{ inputs.surah }} \
+            --reciter ar.minshawi \
+            --svg assets/Tile-Derivative-9.svg \
             --out surah_${{ inputs.surah }}_minshawi.mp4
 
       - name: Upload test video
