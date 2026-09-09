@@ -1,0 +1,52 @@
+name: Test Quran Video - Husary
+
+on:
+  workflow_dispatch:
+    inputs:
+      surah:
+        description: "رقم السورة للتجربة"
+        required: true
+        default: "99"
+        type: string
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install requests mutagen pillow arabic_reshaper python-bidi
+
+      - name: Install resvg
+        run: |
+          curl -L -o resvg.tar.gz https://github.com/linebender/resvg/releases/latest/download/resvg-linux-x86_64.tar.gz
+          tar -xzf resvg.tar.gz
+          find . -type f -name resvg -exec chmod +x {} \;
+          echo "$(dirname "$(find . -type f -name resvg | head -n 1)")" >> "$GITHUB_PATH"
+
+      - name: Render Surah with Husary
+        run: |
+          python quran_final.py \
+            --surah ${{ inputs.surah }} \
+            --reciter ar.husary \
+            --svg assets/Tile-Derivative-8.svg \
+            --out surah_${{ inputs.surah }}_husary.mp4
+
+      - name: Upload test video
+        uses: actions/upload-artifact@v4
+        with:
+          name: surah-${{ inputs.surah }}-husary
+          path: surah_${{ inputs.surah }}_husary.mp4
+          retention-days: 3
