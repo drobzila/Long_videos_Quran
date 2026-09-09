@@ -1,4 +1,4 @@
-name: Test Quran Video - Husary
+name: Test Quran Video - Minshawi
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       surah:
         description: "رقم السورة للتجربة"
         required: true
-        default: "99"
+        default: "108"
         type: string
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
         run: |
           curl -L -o resvg.tar.gz https://github.com/linebender/resvg/releases/latest/download/resvg-linux-x86_64.tar.gz
           tar -xzf resvg.tar.gz
-          find . -type f -name resvg -exec chmod +x {} \;
+          find . -type f -name resvg -exec chmod +x {} \\
           echo "$(dirname "$(find . -type f -name resvg | head -n 1)")" >> "$GITHUB_PATH"
 
       - name: Verify Quran Arabic font
@@ -50,17 +50,17 @@ jobs:
           print(f"[OK] Test bbox: {font.getbbox('بِسْمِ اللَّهِ')}")
           PY
 
-      - name: Render Surah with Husary
+      - name: Render Surah with Minshawi and new motif
         run: |
-          python quran_final.py \
-            --surah ${{ inputs.surah }} \
-            --reciter ar.husary \
-            --svg assets/Tile-Derivative-8.svg \
-            --out surah_${{ inputs.surah }}_husary.mp4
+          python quran_final.py \\
+            --surah ${{ inputs.surah }} \\
+            --reciter ar.minshawi \\
+            --svg assets/Tile-Derivative-9.svg \\
+            --out surah_${{ inputs.surah }}_minshawi.mp4
 
       - name: Upload test video
         uses: actions/upload-artifact@v4
         with:
-          name: surah-${{ inputs.surah }}-husary
-          path: surah_${{ inputs.surah }}_husary.mp4
+          name: surah-${{ inputs.surah }}-minshawi
+          path: surah_${{ inputs.surah }}_minshawi.mp4
           retention-days: 3
