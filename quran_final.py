@@ -56,11 +56,10 @@ TEXT_COLOR = (27, 94, 32)
 INFO_COLOR = (85, 85, 85)
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
-# EveryAyah provides a dedicated 001000 recording for the Bismillah.
-# This keeps the Bismillah separate from the first ayah and preserves
-# the original duration of both recordings without trimming.
+# Al Quran Cloud identifies global ayah 1 (Al-Fatihah 1:1) as Bismillah.
+# Use the same Minshawi Murattal edition as the selected reciter.
 BISMILLAH_AUDIO_URL = (
-    "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001000.mp3"
+    "https://cdn.islamic.network/quran/audio/128/ar.minshawi/1.mp3"
 )
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
@@ -105,7 +104,7 @@ def download_all_parallel(ayahs, max_workers=8):
 
 def download_bismillah() -> Tuple[str, float]:
     os.makedirs(AUDIO_DIR, exist_ok=True)
-    path = os.path.join(AUDIO_DIR, "bismillah.mp3")
+    path = os.path.join(AUDIO_DIR, "bismillah_ar_minshawi.mp3")
     if not os.path.exists(path):
         r = requests.get(BISMILLAH_AUDIO_URL, stream=True, timeout=30)
         r.raise_for_status()
