@@ -26,7 +26,7 @@ from typing import Tuple
 
 import requests
 from mutagen.mp3 import MP3
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
 
 try:
     import arabic_reshaper
@@ -34,6 +34,10 @@ try:
     HAS_SHAPING = True
 except ImportError:
     HAS_SHAPING = False
+
+# Pillow + libraqm can perform bidi layout itself. In that case we must NOT
+# pass the text through python-bidi first, otherwise Arabic gets reversed twice.
+HAS_RAQM = bool(features.check("raqm"))
 
 # --------------------------------------------------------------- الإعدادات ---
 WIDTH, HEIGHT = 1920, 1080
@@ -120,9 +124,16 @@ def load_colored_motif(svg_path: str, color=PATTERN_COLOR, size=1024) -> Image.I
 
 
 def shape_arabic(text: str) -> str:
-    if HAS_SHAPING:
-        return get_display(arabic_reshaper.reshape(text))
-    return text
+    if not HAS_SHAPING:
+        return text
+    reshaped = arabic_reshaper.reshape(text)
+    # If Pillow has libraqm, it handles RTL ordering itself.
+    # python-bidi is only used as a fallback for Pillow builds without RAQM.
+    return reshaped if HAS_RAQM else get_display(reshaped)
+
+
+def text_layout_kwargs() -> dict:
+    return {"direction": "rtl"} if HAS_RAQM else {}
 
 
 @functools.lru_cache(maxsize=None)
@@ -223,19 +234,20 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     if text_opacity > 0.001:
         text_layer = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(text_layer)
+        layout = text_layout_kwargs()
 
         box_w = WIDTH * 0.72
         shaped_main = shape_arabic(f"« {main_text} »")
         font_size = 54
         font_main = load_font(font_size)
-        bbox = draw.textbbox((0, 0), shaped_main, font=font_main)
+        bbox = draw.textbbox((0, 0), shaped_main, font=font_main, **layout)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         max_w = box_w - 100
 
         while tw > max_w and font_size > 20:
             font_size -= 2
             font_main = load_font(font_size)
-            bbox = draw.textbbox((0, 0), shaped_main, font=font_main)
+            bbox = draw.textbbox((0, 0), shaped_main, font=font_main, **layout)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
         alpha_val = int(255 * text_opacity)
@@ -245,17 +257,19 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
             shaped_main,
             font=font_main,
             fill=TEXT_COLOR + (alpha_val,),
+            **layout,
         )
 
         shaped_info = shape_arabic(info_text)
         font_info = load_font(24)
-        ibbox = draw.textbbox((0, 0), shaped_info, font=font_info)
+        ibbox = draw.textbbox((0, 0), shaped_info, font=font_info, **layout)
         iw = ibbox[2] - ibbox[0]
         draw.text(
             (cx - iw / 2, cy + th / 2 + 28),
             shaped_info,
             font=font_info,
             fill=INFO_COLOR + (alpha_val,),
+            **layout,
         )
 
         frame.alpha_composite(text_layer)
