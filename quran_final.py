@@ -59,7 +59,7 @@ BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِ
 # Al Quran Cloud identifies global ayah 1 (Al-Fatihah 1:1) as Bismillah.
 # Use the same Minshawi Murattal edition as the selected reciter.
 BISMILLAH_AUDIO_URL = (
-    "https://cdn.islamic.network/quran/audio/128/ar.minshawi/1.mp3"
+    "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001001.mp3"
 )
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
