@@ -35,11 +35,8 @@ try:
 except ImportError:
     HAS_SHAPING = False
 
-# Pillow + libraqm can perform bidi layout itself. In that case we must NOT
-# pass the text through python-bidi first, otherwise Arabic gets reversed twice.
 HAS_RAQM = bool(features.check("raqm"))
 
-# --------------------------------------------------------------- الإعدادات ---
 WIDTH, HEIGHT = 1920, 1080
 FPS = 30
 RESVG_BIN = os.environ.get("RESVG_BIN", "resvg")
@@ -59,10 +56,14 @@ TEXT_COLOR = (27, 94, 32)
 INFO_COLOR = (85, 85, 85)
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
+# EveryAyah provides a dedicated 001000 recording for the Bismillah.
+# This keeps the Bismillah separate from the first ayah and preserves
+# the original duration of both recordings without trimming.
+BISMILLAH_AUDIO_URL = (
+    "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001000.mp3"
+)
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
-
-# يمكن تحديد مسار خط مخصص عبر QURAN_FONT.
 QURAN_FONT = os.environ.get("QURAN_FONT", "")
 
 
@@ -90,7 +91,6 @@ def download_one(ayah: Ayah):
             for chunk in r.iter_content(chunk_size=1024 * 64):
                 if chunk:
                     f.write(chunk)
-    # نستخدم المدة الأصلية كاملة، بدون حذف الصمت.
     ayah.duration = MP3(ayah.audio_path).info.length
     return ayah
 
@@ -103,7 +103,19 @@ def download_all_parallel(ayahs, max_workers=8):
             fut.result()
 
 
-# ---------------------------------------------------- التجهيز والـ Caching ---
+def download_bismillah() -> Tuple[str, float]:
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+    path = os.path.join(AUDIO_DIR, "bismillah.mp3")
+    if not os.path.exists(path):
+        r = requests.get(BISMILLAH_AUDIO_URL, stream=True, timeout=30)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 64):
+                if chunk:
+                    f.write(chunk)
+    return path, MP3(path).info.length
+
+
 def load_colored_motif(svg_path: str, color=PATTERN_COLOR, size=1024) -> Image.Image:
     if shutil.which(RESVG_BIN) is None:
         raise RuntimeError(f"لم يتم العثور على {RESVG_BIN} في PATH.")
@@ -127,8 +139,6 @@ def shape_arabic(text: str) -> str:
     if not HAS_SHAPING:
         return text
     reshaped = arabic_reshaper.reshape(text)
-    # If Pillow has libraqm, it handles RTL ordering itself.
-    # python-bidi is only used as a fallback for Pillow builds without RAQM.
     return reshaped if HAS_RAQM else get_display(reshaped)
 
 
@@ -138,8 +148,6 @@ def text_layout_kwargs() -> dict:
 
 @functools.lru_cache(maxsize=None)
 def load_font(size: int):
-    # ترتيب الأولوية: متغير البيئة، ثم Amiri المثبت على Linux، ثم Windows،
-    # ثم نسخة الخط داخل المستودع إن وجدت.
     candidates = [
         QURAN_FONT,
         "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf",
@@ -165,7 +173,6 @@ def load_font(size: int):
 
 
 def build_base_cached_background(w, h) -> Image.Image:
-    """تجهيز الخلفية المتدرجة + الصندوق الزجاجي والظل مرة واحدة فقط."""
     img = Image.new("RGBA", (w, h))
     draw = ImageDraw.Draw(img)
     for y in range(h):
@@ -203,7 +210,6 @@ def build_base_cached_background(w, h) -> Image.Image:
     return img
 
 
-# --------------------------------------------------- Worker Process (init) ---
 _W_MOTIF = None
 _W_BASE_BG = None
 
@@ -277,7 +283,6 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     return frame_idx, frame.convert("RGB").tobytes()
 
 
-# ----------------------------------------------------------- المحرك الرئيسي ---
 def build(
     surah_number: int,
     reciter: str,
@@ -302,8 +307,16 @@ def build(
     print("[*] تحميل الصوتيات بالتوازي...")
     download_all_parallel(ayahs)
 
+    bismillah_path = None
+    bismillah_duration = 0.0
+    if surah_number not in (1, 9):
+        print("[*] تحميل تلاوة البسملة...")
+        bismillah_path, bismillah_duration = download_bismillah()
+
     concat_list = os.path.join(AUDIO_DIR, "files.txt")
     with open(concat_list, "w", encoding="utf-8") as f:
+        if bismillah_path:
+            f.write(f"file '{os.path.abspath(bismillah_path)}'\n")
         for a in ayahs:
             f.write(f"file '{os.path.abspath(a.audio_path)}'\n")
 
@@ -341,44 +354,43 @@ def build(
     tasks = []
     global_frame_counter = 0
 
+    # عرض البسملة ومزامنة الفيديو معها قبل الآية الأولى.
+    if bismillah_path:
+        bismillah_frames = int(bismillah_duration * FPS)
+        fade_frames = max(1, int(FADE_DURATION_SEC * FPS))
+        for f in range(bismillah_frames):
+            global_t = global_frame_counter / FPS
+            frames_to_end = bismillah_frames - f
+            opacity_in = min(1.0, f / fade_frames)
+            opacity_out = min(1.0, max(0.0, frames_to_end / fade_frames))
+            opacity = min(opacity_in, opacity_out)
+            tasks.append(
+                (
+                    global_frame_counter,
+                    global_t,
+                    BISMILLAH,
+                    f"📖 سورة {surah_name}",
+                    opacity,
+                )
+            )
+            global_frame_counter += 1
+
     for idx, ayah in enumerate(ayahs):
         info_text = f"📖 سورة {surah_name} - آية {ayah.number_in_surah}"
         text = ayah.text
-
-        has_bismillah = False
-        bismillah_dur = 0.0
-        if idx == 0 and surah_number not in (1, 9) and text.startswith(BISMILLAH):
-            has_bismillah = True
-            text = text[len(BISMILLAH):].strip()
-            bismillah_dur = min(2.3, ayah.duration)
-
         total_ayah_frames = int(ayah.duration * FPS)
-        fade_frames = int(FADE_DURATION_SEC * FPS)
+        fade_frames = max(1, int(FADE_DURATION_SEC * FPS))
 
         for f in range(total_ayah_frames):
             global_t = global_frame_counter / FPS
-            curr_time = f / FPS
-
-            if has_bismillah and curr_time < bismillah_dur:
-                disp_text = BISMILLAH
-                disp_info = f"📖 سورة {surah_name}"
-                if f > (int(bismillah_dur * FPS) - fade_frames):
-                    opacity = max(0.0, (int(bismillah_dur * FPS) - f) / fade_frames)
-                else:
-                    opacity = min(1.0, f / fade_frames)
-            else:
-                disp_text = text
-                disp_info = info_text
-                frames_from_start = (
-                    f if not has_bismillah else f - int(bismillah_dur * FPS)
-                )
-                frames_to_end = total_ayah_frames - f
-                opacity_in = min(1.0, max(0.0, frames_from_start / fade_frames))
-                opacity_out = min(1.0, max(0.0, frames_to_end / fade_frames))
-                opacity = min(opacity_in, opacity_out)
+            frames_from_start = f
+            frames_to_end = total_ayah_frames - f
+            opacity_in = min(1.0, max(0.0, frames_from_start / fade_frames))
+            opacity_out = min(1.0, max(0.0, frames_to_end / fade_frames))
+            opacity = min(opacity_in, opacity_out)
 
             tasks.append(
-                (global_frame_counter, global_t, disp_text, disp_info, opacity)
+                (global_frame_counter, global_t, text, info_text, opacity)
             )
             global_frame_counter += 1
 
@@ -391,41 +403,31 @@ def build(
             max_workers=num_workers,
             initializer=_worker_init,
             initargs=(svg_path,),
-        ) as executor:
-            for i in range(0, len(tasks), chunk_size):
-                chunk = tasks[i:i + chunk_size]
-                results = list(executor.map(render_frame_task, chunk))
-                results.sort(key=lambda x: x[0])
-                for _, frame_bytes in results:
+        ) as pool:
+            for start in range(0, len(tasks), chunk_size):
+                chunk = tasks[start : start + chunk_size]
+                for _, frame_bytes in pool.map(render_frame_task, chunk):
                     process.stdin.write(frame_bytes)
-                print(
-                    f"  [تقدم العمل] "
-                    f"{min(i + chunk_size, len(tasks))}/{len(tasks)} إطاراً"
-                )
     finally:
         process.stdin.close()
         process.wait()
 
-    if os.path.exists(concat_list):
-        os.remove(concat_list)
-    if os.path.exists(full_audio):
-        os.remove(full_audio)
+    if process.returncode != 0:
+        raise RuntimeError(f"ffmpeg فشل برمز خروج {process.returncode}")
 
-    print(f"[✓] تم توليد الفيديو بنجاح: {out_path}")
+    print(f"[OK] تم إنشاء الفيديو: {out_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="مولد فيديوهات القرآن الطويلة")
+    parser.add_argument("--surah", type=int, required=True)
+    parser.add_argument("--reciter", default="ar.husary")
+    parser.add_argument("--svg", default="assets/Tile-Derivative-8.svg")
+    parser.add_argument("--out", default="quran_output.mp4")
+    parser.add_argument("--gpu", choices=["none", "nvidia", "qsv"], default="none")
+    args = parser.parse_args()
+    build(args.surah, args.reciter, args.svg, args.out, args.gpu)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--surah", type=int, required=True)
-    parser.add_argument("--reciter", type=str, default="ar.abdulsamad")
-    parser.add_argument("--svg", type=str, default="assets/Tile-Derivative-9.svg")
-    parser.add_argument("--out", type=str, default="quran_v3.mp4")
-    parser.add_argument(
-        "--gpu",
-        type=str,
-        choices=["none", "nvidia", "qsv"],
-        default="none",
-    )
-    args = parser.parse_args()
-
-    build(args.surah, args.reciter, args.svg, args.out, gpu_accel=args.gpu)
+    main()
