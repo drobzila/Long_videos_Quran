@@ -1,5 +1,6 @@
 import os
 import pickle
+import re
 from datetime import datetime, timezone
 
 from googleapiclient.discovery import build
@@ -25,6 +26,37 @@ def get_surah_name(surah_number: int) -> str:
     return response.json()["data"]["name"]
 
 
+def clean_surah_name(name: str) -> str:
+    """Return a clean Arabic surah name without decorative diacritics/prefix."""
+    name = re.sub(r"^[\s]*(?:سُورَةُ|سورة)\s*", "", name)
+    name = re.sub(r"[\u064B-\u065F\u0670]", "", name)
+    return name.strip()
+
+
+def build_youtube_metadata(surah_number: int):
+    surah_name = clean_surah_name(get_surah_name(surah_number))
+
+    title = (
+        f"سورة {surah_name} كاملة | تلاوة خاشعة بصوت "
+        "محمد صديق المنشاوي رحمه الله | القرآن الكريم"
+    )
+
+    description = (
+        f"سورة {surah_name} كاملة بصوت الشيخ محمد صديق المنشاوي رحمه الله، "
+        "تلاوة خاشعة من القرآن الكريم.\n\n"
+        f"استمع إلى سورة {surah_name} كاملة بجودة عالية، وتدبر آيات كتاب الله.\n\n"
+        f"📖 السورة: {surah_name}\n"
+        "🎙️ القارئ: الشيخ محمد صديق المنشاوي رحمه الله\n"
+        "🕋 القرآن الكريم\n"
+        "🌿 نسمات القرآن\n\n"
+        "نسأل الله أن يجعل القرآن ربيع قلوبنا ونور صدورنا.\n\n"
+        f"#القرآن_الكريم #سورة_{surah_name.replace(' ', '_')} "
+        "#المنشاوي #تلاوة_خاشعة #قرآن"
+    )
+
+    return title, description
+
+
 def upload_video(file_path: str, surah_number: int, publish_at: str):
     if not os.path.isfile(file_path):
         raise FileNotFoundError(file_path)
@@ -36,13 +68,7 @@ def upload_video(file_path: str, surah_number: int, publish_at: str):
     if dt <= datetime.now(timezone.utc):
         raise ValueError("PUBLISH_AT must be in the future")
 
-    surah_name = get_surah_name(surah_number)
-    title = f"{surah_name} | القرآن الكريم | نسمات القرآن"
-    description = (
-        f"تلاوة سورة {surah_name} بصوت الشيخ محمد صديق المنشاوي.\n\n"
-        "القرآن الكريم — نسمات القرآن\n\n"
-        "#القرآن #تلاوة #المنشاوي #سورة"
-    )
+    title, description = build_youtube_metadata(surah_number)
 
     credentials = load_creds()
     youtube = build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
