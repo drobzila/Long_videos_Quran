@@ -56,6 +56,7 @@ TEXT_COLOR = (27, 94, 32)
 INFO_COLOR = (85, 85, 85)
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
+BISMILLAH_AUDIO_URL = "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001001.mp3"
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
 QURAN_FONT = os.environ.get("QURAN_FONT", "")
@@ -95,6 +96,20 @@ def download_all_parallel(ayahs, max_workers=8):
         futures = [ex.submit(download_one, a) for a in ayahs]
         for fut in cf.as_completed(futures):
             fut.result()
+
+
+def download_bismillah() -> Tuple[str, float]:
+    """تحميل بسملة المنشاوي لاستخدامها كصوت الآية الأولى، دون قص أو حذف."""
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+    path = os.path.join(AUDIO_DIR, "bismillah_ar_minshawi.mp3")
+    if not os.path.exists(path):
+        r = requests.get(BISMILLAH_AUDIO_URL, stream=True, timeout=30)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 64):
+                if chunk:
+                    f.write(chunk)
+    return path, MP3(path).info.length
 
 
 def load_colored_motif(svg_path: str, color=PATTERN_COLOR, size=1024) -> Image.Image:
@@ -288,8 +303,18 @@ def build(
     print("[*] تحميل الصوتيات بالتوازي...")
     download_all_parallel(ayahs)
 
+    bismillah_path = None
+    bismillah_duration = 0.0
+    if surah_number not in (1, 9):
+        print("[*] تحميل تلاوة البسملة للآية الأولى...")
+        bismillah_path, bismillah_duration = download_bismillah()
+        # لا نحذف ولا نقص أي جزء من صوت الآية الأولى؛ نضيف البسملة الأصلية قبلها.
+        ayahs[0].duration += bismillah_duration
+
     concat_list = os.path.join(AUDIO_DIR, "files.txt")
     with open(concat_list, "w", encoding="utf-8") as f:
+        if bismillah_path:
+            f.write(f"file '{os.path.abspath(bismillah_path)}'\n")
         for a in ayahs:
             f.write(f"file '{os.path.abspath(a.audio_path)}'\n")
 
@@ -327,8 +352,8 @@ def build(
     tasks = []
     global_frame_counter = 0
 
-    # نعرض نص كل آية كما هو، ونستخدم صوت الآية نفسه دون إضافة مقطع بسملة منفصل.
-    # بهذا تكون البسملة الموجودة في بداية الآية الأولى مرتبطة بصوتها مباشرة.
+    # نعرض نص كل آية كما هو، بما فيه البسملة في بداية الآية الأولى.
+    # صوت البسملة المنفصل يسبق صوت الآية الأولى، بينما العرض المرئي يبقى مرة واحدة فقط.
     for ayah in ayahs:
         info_text = f"📖 سورة {surah_name} - آية {ayah.number_in_surah}"
         text = ayah.text.strip()
