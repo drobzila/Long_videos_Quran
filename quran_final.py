@@ -145,6 +145,28 @@ def text_layout_kwargs() -> dict:
     return {"direction": "rtl"} if HAS_RAQM else {}
 
 
+BISMILLAH_PREFIXES = (
+    BISMILLAH,
+    "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+    "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+    "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
+    "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
+)
+
+
+def display_ayah_text(text: str, surah_number: int, number_in_surah: int) -> str:
+    """تجنب عرض البسملة مرتين؛ لا نلمس الصوت أو مدته."""
+    text = text.strip()
+    if surah_number in (1, 9) or number_in_surah != 1:
+        return text
+
+    for prefix in BISMILLAH_PREFIXES:
+        if text.startswith(prefix):
+            return text[len(prefix):].lstrip(" \u0610\u0611\u0612\u0613\u0614\u0615\u0616\u0617\u0618\u0619\u061a\u061b\u061c\u061d\u061e\u061f\u0640")
+
+    return text
+
+
 @functools.lru_cache(maxsize=None)
 def load_font(size: int):
     candidates = [
@@ -376,7 +398,7 @@ def build(
 
     for idx, ayah in enumerate(ayahs):
         info_text = f"📖 سورة {surah_name} - آية {ayah.number_in_surah}"
-        text = ayah.text
+        text = display_ayah_text(ayah.text, surah_number, ayah.number_in_surah)
         total_ayah_frames = int(ayah.duration * FPS)
         fade_frames = max(1, int(FADE_DURATION_SEC * FPS))
 
@@ -426,7 +448,3 @@ def main():
     parser.add_argument("--gpu", choices=["none", "nvidia", "qsv"], default="none")
     args = parser.parse_args()
     build(args.surah, args.reciter, args.svg, args.out, args.gpu)
-
-
-if __name__ == "__main__":
-    main()
