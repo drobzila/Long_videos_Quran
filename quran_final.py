@@ -56,11 +56,6 @@ TEXT_COLOR = (27, 94, 32)
 INFO_COLOR = (85, 85, 85)
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
-# Al Quran Cloud identifies global ayah 1 (Al-Fatihah 1:1) as Bismillah.
-# Use the same Minshawi Murattal edition as the selected reciter.
-BISMILLAH_AUDIO_URL = (
-    "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001001.mp3"
-)
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
 QURAN_FONT = os.environ.get("QURAN_FONT", "")
@@ -102,19 +97,6 @@ def download_all_parallel(ayahs, max_workers=8):
             fut.result()
 
 
-def download_bismillah() -> Tuple[str, float]:
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    path = os.path.join(AUDIO_DIR, "bismillah_ar_minshawi.mp3")
-    if not os.path.exists(path):
-        r = requests.get(BISMILLAH_AUDIO_URL, stream=True, timeout=30)
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 64):
-                if chunk:
-                    f.write(chunk)
-    return path, MP3(path).info.length
-
-
 def load_colored_motif(svg_path: str, color=PATTERN_COLOR, size=1024) -> Image.Image:
     if shutil.which(RESVG_BIN) is None:
         raise RuntimeError(f"لم يتم العثور على {RESVG_BIN} في PATH.")
@@ -143,28 +125,6 @@ def shape_arabic(text: str) -> str:
 
 def text_layout_kwargs() -> dict:
     return {"direction": "rtl"} if HAS_RAQM else {}
-
-
-BISMILLAH_PREFIXES = (
-    BISMILLAH,
-    "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-    "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-    "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-    "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-)
-
-
-def display_ayah_text(text: str, surah_number: int, number_in_surah: int) -> str:
-    """تجنب عرض البسملة مرتين؛ لا نلمس الصوت أو مدته."""
-    text = text.strip()
-    if surah_number in (1, 9) or number_in_surah != 1:
-        return text
-
-    for prefix in BISMILLAH_PREFIXES:
-        if text.startswith(prefix):
-            return text[len(prefix):].lstrip(" \u0610\u0611\u0612\u0613\u0614\u0615\u0616\u0617\u0618\u0619\u061a\u061b\u061c\u061d\u061e\u061f\u0640")
-
-    return text
 
 
 @functools.lru_cache(maxsize=None)
@@ -328,16 +288,8 @@ def build(
     print("[*] تحميل الصوتيات بالتوازي...")
     download_all_parallel(ayahs)
 
-    bismillah_path = None
-    bismillah_duration = 0.0
-    if surah_number not in (1, 9):
-        print("[*] تحميل تلاوة البسملة...")
-        bismillah_path, bismillah_duration = download_bismillah()
-
     concat_list = os.path.join(AUDIO_DIR, "files.txt")
     with open(concat_list, "w", encoding="utf-8") as f:
-        if bismillah_path:
-            f.write(f"file '{os.path.abspath(bismillah_path)}'\n")
         for a in ayahs:
             f.write(f"file '{os.path.abspath(a.audio_path)}'\n")
 
@@ -375,30 +327,11 @@ def build(
     tasks = []
     global_frame_counter = 0
 
-    # عرض البسملة ومزامنة الفيديو معها قبل الآية الأولى.
-    if bismillah_path:
-        bismillah_frames = int(bismillah_duration * FPS)
-        fade_frames = max(1, int(FADE_DURATION_SEC * FPS))
-        for f in range(bismillah_frames):
-            global_t = global_frame_counter / FPS
-            frames_to_end = bismillah_frames - f
-            opacity_in = min(1.0, f / fade_frames)
-            opacity_out = min(1.0, max(0.0, frames_to_end / fade_frames))
-            opacity = min(opacity_in, opacity_out)
-            tasks.append(
-                (
-                    global_frame_counter,
-                    global_t,
-                    BISMILLAH,
-                    f"📖 سورة {surah_name}",
-                    opacity,
-                )
-            )
-            global_frame_counter += 1
-
-    for idx, ayah in enumerate(ayahs):
+    # نعرض نص كل آية كما هو، ونستخدم صوت الآية نفسه دون إضافة مقطع بسملة منفصل.
+    # بهذا تكون البسملة الموجودة في بداية الآية الأولى مرتبطة بصوتها مباشرة.
+    for ayah in ayahs:
         info_text = f"📖 سورة {surah_name} - آية {ayah.number_in_surah}"
-        text = display_ayah_text(ayah.text, surah_number, ayah.number_in_surah)
+        text = ayah.text.strip()
         total_ayah_frames = int(ayah.duration * FPS)
         fade_frames = max(1, int(FADE_DURATION_SEC * FPS))
 
