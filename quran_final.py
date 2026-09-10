@@ -448,3 +448,7 @@ def main():
     parser.add_argument("--gpu", choices=["none", "nvidia", "qsv"], default="none")
     args = parser.parse_args()
     build(args.surah, args.reciter, args.svg, args.out, args.gpu)
+
+
+if __name__ == "__main__":
+    main()
