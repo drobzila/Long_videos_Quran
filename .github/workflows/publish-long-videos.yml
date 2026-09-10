@@ -1,28 +1,27 @@
-name: Quran Long Videos - Render, Upload & Schedule
+name: Quran Long Video - Render, Upload & Schedule
 
 on:
-  schedule:
-    # GitHub Actions uses UTC. We calculate the real Algeria slots below.
-    - cron: "17 6 * * *"
   workflow_dispatch:
     inputs:
-      surah1:
-        description: "السورة الأولى (اتركها افتراضيًا 108)"
+      surah:
+        description: "رقم السورة (1-114)"
         required: true
         default: "108"
         type: string
-      surah2:
-        description: "السورة الثانية (اتركها افتراضيًا 109)"
+      publish_date:
+        description: "تاريخ النشر بتوقيت الجزائر YYYY-MM-DD"
         required: true
-        default: "109"
+        default: "2026-09-12"
+        type: string
+      publish_time:
+        description: "وقت النشر بتوقيت الجزائر HH:MM"
+        required: true
+        default: "19:00"
         type: string
 
 concurrency:
   group: quran-long-video-publisher
   cancel-in-progress: false
-
-permissions:
-  contents: write
 
 jobs:
   publish:
@@ -32,8 +31,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -45,7 +42,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-hosny-amiri fontconfig
           fc-cache -fv
-          fc-list | grep -i "Amiri" | head -n 10
 
       - name: Install Python dependencies
         run: |
@@ -62,97 +58,55 @@ jobs:
           echo "$(dirname "$RESVG_PATH")" >> "$GITHUB_PATH"
           echo "[OK] resvg found at: $RESVG_PATH"
 
+      - name: Validate and calculate publish time
+        id: schedule
+        env:
+          SURAH: ${{ inputs.surah }}
+          PUBLISH_DATE: ${{ inputs.publish_date }}
+          PUBLISH_TIME: ${{ inputs.publish_time }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone, timedelta
+          import os
+
+          surah = int(os.environ["SURAH"])
+          if not 1 <= surah <= 114:
+              raise SystemExit("رقم السورة يجب أن يكون بين 1 و114")
+
+          date_text = os.environ["PUBLISH_DATE"].strip()
+          time_text = os.environ["PUBLISH_TIME"].strip()
+          try:
+              local_dt = datetime.strptime(
+                  f"{date_text} {time_text}", "%Y-%m-%d %H:%M"
+              ).replace(tzinfo=timezone(timedelta(hours=1)))
+          except ValueError:
+              raise SystemExit("التاريخ يجب أن يكون YYYY-MM-DD والوقت HH:MM")
+
+          now = datetime.now(timezone.utc)
+          if local_dt.astimezone(timezone.utc) <= now:
+              raise SystemExit("موعد النشر يجب أن يكون في المستقبل")
+
+          utc_dt = local_dt.astimezone(timezone.utc)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"surah={surah}\n")
+              out.write(f"publish_at={utc_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
+              out.write(f"publish_local={local_dt.strftime('%Y-%m-%d %H:%M')}\n")
+
+          print(f"[OK] Surah: {surah}")
+          print(f"[OK] Algeria: {local_dt.strftime('%Y-%m-%d %H:%M')}")
+          print(f"[OK] UTC: {utc_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+          PY
+
       - name: Restore YouTube credentials
         run: |
           printf '%s' '${{ secrets.YT_TOKEN }}' | base64 -d > token.pkl
           test -s token.pkl
           echo "[OK] YouTube token restored"
 
-      - name: Select surahs
-        id: surahs
+      - name: Render video
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_SURAH1: ${{ inputs.surah1 }}
-          INPUT_SURAH2: ${{ inputs.surah2 }}
-        run: |
-          python - <<'PY'
-          import os
-
-          event = os.environ["EVENT_NAME"]
-          if event == "workflow_dispatch":
-              s1 = int(os.environ["INPUT_SURAH1"])
-              s2 = int(os.environ["INPUT_SURAH2"])
-          else:
-              with open("next_surah.txt", "r", encoding="utf-8") as f:
-                  s1 = int(f.read().strip())
-              if not 1 <= s1 <= 114:
-                  s1 = 1
-              s2 = 1 if s1 == 114 else s1 + 1
-
-          for value in (s1, s2):
-              if not 1 <= value <= 114:
-                  raise SystemExit(f"Invalid surah number: {value}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"surah1={s1}\n")
-              out.write(f"surah2={s2}\n")
-
-          print(f"[OK] Video 1: Surah {s1}")
-          print(f"[OK] Video 2: Surah {s2}")
-          PY
-
-      - name: Calculate publishing times
-        id: times
-        run: |
-          python - <<'PY'
-          from datetime import datetime, timedelta, timezone
-          import os
-
-          DZ = timezone(timedelta(hours=1))
-          now_utc = datetime.now(timezone.utc)
-          local_now = now_utc.astimezone(DZ)
-
-          def slots_for_date(day):
-              # Based on the same Algeria publishing pattern used in Quran_rendering.
-              if day.weekday() == 5:  # Saturday
-                  return [(14, 0), (20, 0)]
-              return [(12, 30), (19, 0)]
-
-          candidates = []
-          for day_offset in range(0, 4):
-              day = (local_now + timedelta(days=day_offset)).date()
-              for hour, minute in slots_for_date(day):
-                  candidate = datetime(
-                      day.year, day.month, day.day, hour, minute, tzinfo=DZ
-                  )
-                  if candidate > local_now:
-                      candidates.append(candidate)
-              if len(candidates) >= 2:
-                  break
-
-          if len(candidates) < 2:
-              raise RuntimeError("Could not calculate two future publishing slots")
-
-          p1 = candidates[0].astimezone(timezone.utc)
-          p2 = candidates[1].astimezone(timezone.utc)
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write("publish1=" + p1.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
-              out.write("publish2=" + p2.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
-              out.write("local1=" + candidates[0].strftime("%Y-%m-%d %H:%M") + "\n")
-              out.write("local2=" + candidates[1].strftime("%Y-%m-%d %H:%M") + "\n")
-
-          print("Current Algeria time:", local_now.strftime("%Y-%m-%d %H:%M:%S"))
-          print("Video 1 Algeria:", candidates[0].strftime("%Y-%m-%d %H:%M"))
-          print("Video 1 UTC:", p1.strftime("%Y-%m-%dT%H:%M:%SZ"))
-          print("Video 2 Algeria:", candidates[1].strftime("%Y-%m-%d %H:%M"))
-          print("Video 2 UTC:", p2.strftime("%Y-%m-%dT%H:%M:%SZ"))
-          PY
-
-      - name: Render video 1
-        env:
-          SURAH: ${{ steps.surahs.outputs.surah1 }}
-          OUTPUT_FILE: surah_${{ steps.surahs.outputs.surah1 }}_long.mp4
+          SURAH: ${{ steps.schedule.outputs.surah }}
+          OUTPUT_FILE: surah_${{ steps.schedule.outputs.surah }}_long.mp4
         run: |
           rm -rf audio_temp
           rm -f youtube_url.txt
@@ -163,21 +117,21 @@ jobs:
             --out "$OUTPUT_FILE"
           test -s "$OUTPUT_FILE"
 
-      - name: Upload and schedule video 1
+      - name: Upload and schedule on YouTube
         env:
-          VIDEO_FILE: surah_${{ steps.surahs.outputs.surah1 }}_long.mp4
-          SURAH: ${{ steps.surahs.outputs.surah1 }}
-          PUBLISH_AT: ${{ steps.times.outputs.publish1 }}
+          VIDEO_FILE: surah_${{ steps.schedule.outputs.surah }}_long.mp4
+          SURAH: ${{ steps.schedule.outputs.surah }}
+          PUBLISH_AT: ${{ steps.schedule.outputs.publish_at }}
         run: python upload.py
 
-      - name: Notify Telegram - video 1
+      - name: Notify Telegram
         if: success()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PUBLISH_AT: ${{ steps.times.outputs.publish1 }}
-          PUBLISH_LOCAL: ${{ steps.times.outputs.local1 }}
-          SURAH: ${{ steps.surahs.outputs.surah1 }}
+          PUBLISH_AT: ${{ steps.schedule.outputs.publish_at }}
+          PUBLISH_LOCAL: ${{ steps.schedule.outputs.publish_local }}
+          SURAH: ${{ steps.schedule.outputs.surah }}
         run: |
           python - <<'PY'
           import os
@@ -187,7 +141,7 @@ jobs:
           token = os.environ.get("BOT_TOKEN")
           chat = os.environ.get("TELEGRAM_CHAT_ID")
           if not token or not chat:
-              print("Telegram secrets missing; skipping")
+              print("Telegram secrets missing; skipping notification")
               raise SystemExit(0)
 
           url = ""
@@ -196,10 +150,11 @@ jobs:
                   url = f.read().strip()
 
           text = (
-              "🎬 تم إنشاء وجدولة الفيديو الأول بنجاح!\n\n"
+              "✅ تم رفع وجدولة فيديو القرآن بنجاح!\n\n"
               f"📖 السورة: {os.environ['SURAH']}\n"
-              f"🇩🇿 النشر: {os.environ['PUBLISH_LOCAL']}\n"
+              f"🇩🇿 موعد النشر: {os.environ['PUBLISH_LOCAL']}\n"
               f"🌍 UTC: {os.environ['PUBLISH_AT']}\n"
+              f"🎙️ القارئ: محمد صديق المنشاوي\n"
               f"🔗 {url or 'تمت الجدولة بنجاح'}"
           )
 
@@ -213,106 +168,11 @@ jobs:
               print("Telegram:", response.status)
           PY
 
-      - name: Advance scheduled queue after video 1
-        if: success() && github.event_name == 'schedule'
-        run: |
-          NEXT=$(python - <<'PY'
-          s = int(open('next_surah.txt', encoding='utf-8').read().strip())
-          print(1 if s >= 114 else s + 1)
-          PY
-          )
-          printf '%s\n' "$NEXT" > next_surah.txt
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add next_surah.txt
-          git diff --cached --quiet || git commit -m "Advance long-video queue after first upload"
-          git push
-
-      - name: Render video 2
-        env:
-          SURAH: ${{ steps.surahs.outputs.surah2 }}
-          OUTPUT_FILE: surah_${{ steps.surahs.outputs.surah2 }}_long.mp4
-        run: |
-          rm -rf audio_temp
-          rm -f youtube_url.txt
-          python quran_final.py \
-            --surah "$SURAH" \
-            --reciter ar.minshawi \
-            --svg assets/Tile-Derivative-9.svg \
-            --out "$OUTPUT_FILE"
-          test -s "$OUTPUT_FILE"
-
-      - name: Upload and schedule video 2
-        env:
-          VIDEO_FILE: surah_${{ steps.surahs.outputs.surah2 }}_long.mp4
-          SURAH: ${{ steps.surahs.outputs.surah2 }}
-          PUBLISH_AT: ${{ steps.times.outputs.publish2 }}
-        run: python upload.py
-
-      - name: Notify Telegram - video 2
-        if: success()
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PUBLISH_AT: ${{ steps.times.outputs.publish2 }}
-          PUBLISH_LOCAL: ${{ steps.times.outputs.local2 }}
-          SURAH: ${{ steps.surahs.outputs.surah2 }}
-        run: |
-          python - <<'PY'
-          import os
-          import urllib.parse
-          import urllib.request
-
-          token = os.environ.get("BOT_TOKEN")
-          chat = os.environ.get("TELEGRAM_CHAT_ID")
-          if not token or not chat:
-              print("Telegram secrets missing; skipping")
-              raise SystemExit(0)
-
-          url = ""
-          if os.path.exists("youtube_url.txt"):
-              with open("youtube_url.txt", encoding="utf-8") as f:
-                  url = f.read().strip()
-
-          text = (
-              "🎬 تم إنشاء وجدولة الفيديو الثاني بنجاح!\n\n"
-              f"📖 السورة: {os.environ['SURAH']}\n"
-              f"🇩🇿 النشر: {os.environ['PUBLISH_LOCAL']}\n"
-              f"🌍 UTC: {os.environ['PUBLISH_AT']}\n"
-              f"🔗 {url or 'تمت الجدولة بنجاح'}"
-          )
-
-          data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-          req = urllib.request.Request(
-              "https://api.telegram.org/bot" + token + "/sendMessage",
-              data=data,
-              method="POST",
-          )
-          with urllib.request.urlopen(req, timeout=20) as response:
-              print("Telegram:", response.status)
-          PY
-
-      - name: Advance scheduled queue after video 2
-        if: success() && github.event_name == 'schedule'
-        run: |
-          NEXT=$(python - <<'PY'
-          s = int(open('next_surah.txt', encoding='utf-8').read().strip())
-          print(1 if s >= 114 else s + 1)
-          PY
-          )
-          printf '%s\n' "$NEXT" > next_surah.txt
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add next_surah.txt
-          git diff --cached --quiet || git commit -m "Advance long-video queue after second upload"
-          git push
-
-      - name: Upload rendered videos as artifacts
+      - name: Upload rendered video as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quran-long-videos-${{ github.run_number }}
-          path: |
-            surah_*_long.mp4
+          name: quran-long-video-${{ github.run_number }}
+          path: surah_*_long.mp4
           if-no-files-found: ignore
           retention-days: 2
