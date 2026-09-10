@@ -54,12 +54,17 @@ BOX_BORDER_WIDTH = 2
 BOX_RADIUS = 36
 TEXT_COLOR = (27, 94, 32)
 INFO_COLOR = (85, 85, 85)
+BRAND_COLOR = (27, 94, 32)
+BRAND_SECONDARY = (95, 105, 98)
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
 BISMILLAH_AUDIO_URL = "https://www.everyayah.com/data/Minshawy_Murattal_128kbps/001001.mp3"
 AUDIO_DIR = "audio_temp"
 FADE_DURATION_SEC = 0.4
 QURAN_FONT = os.environ.get("QURAN_FONT", "")
+
+BRAND_TITLE = "القرآن الكريم"
+BRAND_NAME = "نسمات القرآن"
 
 
 @dataclass
@@ -99,7 +104,7 @@ def download_all_parallel(ayahs, max_workers=8):
 
 
 def download_bismillah() -> Tuple[str, float]:
-    """تحميل بسملة المنشاوي لاستخدامها كصوت الآية الأولى، دون قص أو حذف."""
+    """تحميل بسملة المنشاوي لاستخدامها قبل صوت الآية الأولى، دون قص أو حذف."""
     os.makedirs(AUDIO_DIR, exist_ok=True)
     path = os.path.join(AUDIO_DIR, "bismillah_ar_minshawi.mp3")
     if not os.path.exists(path):
@@ -178,6 +183,10 @@ def build_base_cached_background(w, h) -> Image.Image:
         b = int(BG_TOP[2] + (BG_BOTTOM[2] - BG_TOP[2]) * t)
         draw.line([(0, y), (w, y)], fill=(r, g, b, 255))
 
+    # لمسات هادئة جدًا أعلى وأسفل الشاشة للحفاظ على البساطة مع هوية واضحة.
+    draw.line([(220, 92), (1700, 92)], fill=BRAND_COLOR + (45,), width=2)
+    draw.line([(220, h - 92), (1700, h - 92)], fill=BRAND_COLOR + (30,), width=2)
+
     box_w, box_h = w * 0.72, h * 0.30
     x0 = (w - box_w) / 2
     y0 = (h - box_h) / 2
@@ -232,6 +241,36 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     x = (WIDTH - tile.width) // 2
     y = (HEIGHT - tile.height) // 2
     frame.alpha_composite(tile, (x, y))
+
+    # هوية القناة: ثابتة وهادئة حتى لا تنافس الآية.
+    branding = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    bdraw = ImageDraw.Draw(branding)
+    layout = text_layout_kwargs()
+
+    title = shape_arabic(BRAND_TITLE)
+    title_font = load_font(34)
+    tb = bdraw.textbbox((0, 0), title, font=title_font, **layout)
+    tw = tb[2] - tb[0]
+    bdraw.text(
+        ((WIDTH - tw) / 2, 48),
+        title,
+        font=title_font,
+        fill=BRAND_COLOR + (235,),
+        **layout,
+    )
+
+    channel = shape_arabic(BRAND_NAME)
+    channel_font = load_font(27)
+    cb = bdraw.textbbox((0, 0), channel, font=channel_font, **layout)
+    cw = cb[2] - cb[0]
+    bdraw.text(
+        ((WIDTH - cw) / 2, HEIGHT - 76),
+        channel,
+        font=channel_font,
+        fill=BRAND_SECONDARY + (225,),
+        **layout,
+    )
+    frame.alpha_composite(branding)
 
     if text_opacity > 0.001:
         text_layer = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
