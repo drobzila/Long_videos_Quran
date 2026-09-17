@@ -1,12 +1,4 @@
-"""واجهة تشغيل مولد فيديوهات القرآن الطويلة.
-
-تم تقسيم منطق المشروع إلى وحدات داخل مجلد core لتسهيل الصيانة والتطوير.
-
-المتطلبات:
-    pip install requests mutagen pillow arabic_reshaper python-bidi
-    resvg في PATH أو عبر RESVG_BIN
-    ffmpeg في PATH
-"""
+"""واجهة تشغيل مولد فيديوهات القرآن الطويلة."""
 
 import argparse
 import os
@@ -24,19 +16,21 @@ def parse_args():
     parser.add_argument("--svg", default="assets/Tile-Derivative-8.svg")
     parser.add_argument("--out", default="quran_output.mp4")
     parser.add_argument("--gpu", choices=["none", "nvidia", "qsv"], default="none")
+    parser.add_argument("--end-image", default=None, help="مسار صورة النهاية الاختيارية")
+    parser.add_argument("--end-duration", type=float, default=5.0, help="مدة صورة النهاية بالثواني")
     return parser.parse_args()
 
 
-def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_accel: str = "none"):
+def build(surah_number: int, reciter: str, svg_path: str, out_path: str,
+          gpu_accel: str = "none", end_image: str | None = None,
+          end_duration: float = 5.0):
     print(f"[*] جلب بيانات سورة رقم {surah_number}...")
     data = fetch_surah_data(surah_number, reciter)
     surah_name = data["name"]
 
     ayahs = build_ayahs(data)
     for ayah in ayahs:
-        ayah.audio_path = os.path.join(
-            AUDIO_DIR, f"ayah_{ayah.number_in_surah}.mp3"
-        )
+        ayah.audio_path = os.path.join(AUDIO_DIR, f"ayah_{ayah.number_in_surah}.mp3")
 
     print("[*] تحميل الصوتيات بالتوازي...")
     bismillah_path, _ = prepare_audio(ayahs, surah_number)
@@ -48,14 +42,16 @@ def build(surah_number: int, reciter: str, svg_path: str, out_path: str, gpu_acc
         svg_path=svg_path,
         out_path=out_path,
         gpu_accel=gpu_accel,
+        end_image=end_image,
+        end_duration=end_duration,
     )
-
     print(f"[OK] تم إنشاء الفيديو: {out_path}")
 
 
 def main():
     args = parse_args()
-    build(args.surah, args.reciter, args.svg, args.out, args.gpu)
+    build(args.surah, args.reciter, args.svg, args.out, args.gpu,
+          args.end_image, args.end_duration)
 
 
 if __name__ == "__main__":
