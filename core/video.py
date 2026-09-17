@@ -47,7 +47,8 @@ def encode_video(tasks, svg_path: str, full_audio: str, out_path: str, gpu_accel
         raise RuntimeError(f"ffmpeg فشل برمز خروج {process.returncode}")
 
 
-def append_end_card(main_video: str, out_path: str, image_path: str | None, duration: float, gpu_accel: str):
+def append_end_card(main_video: str, out_path: str, image_path: str | None,
+                    duration: float, gpu_accel: str):
     if duration <= 0:
         os.replace(main_video, out_path)
         return
@@ -61,8 +62,10 @@ def append_end_card(main_video: str, out_path: str, image_path: str | None, dura
 
         subprocess.run([
             "ffmpeg", "-y", "-loop", "1", "-i", image_file,
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-t", str(duration), "-r", str(FPS), "-s", f"{WIDTH}x{HEIGHT}",
-            "-c:v", vcodec, "-pix_fmt", "yuv420p", "-an", end_video,
+            "-c:v", vcodec, "-pix_fmt", "yuv420p", "-c:a", "aac",
+            "-shortest", end_video,
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         with open(concat_file, "w", encoding="utf-8") as f:
