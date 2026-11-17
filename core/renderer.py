@@ -36,8 +36,10 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     frame_idx, global_t, main_text, info_text, text_opacity = task_args
     motif, base_bg = _W_MOTIF, _W_BASE_BG
 
+    scale = WIDTH / 1920
     angle = 360 * FULL_ROTATIONS_PER_SEC * global_t
-    tile = motif.resize((CENTER_SIZE, CENTER_SIZE), Image.LANCZOS).rotate(
+    motif_size = max(180, int(CENTER_SIZE * scale))
+    tile = motif.resize((motif_size, motif_size), Image.LANCZOS).rotate(
         angle, expand=True, resample=Image.BICUBIC
     )
     r, g, b, a = tile.split()
@@ -55,11 +57,11 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     layout = text_layout_kwargs()
 
     title = shape_arabic("القرآن الكريم")
-    title_font = load_font(34)
+    title_font = load_font(max(22, int(34 * scale)))
     tb = bdraw.textbbox((0, 0), title, font=title_font, **layout)
     tw = tb[2] - tb[0]
     bdraw.text(
-        ((WIDTH - tw) / 2, 48),
+        ((WIDTH - tw) / 2, int(48 * scale)),
         title,
         font=title_font,
         fill=BRAND_COLOR + (235,),
@@ -71,7 +73,7 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
     cb = bdraw.textbbox((0, 0), channel, font=channel_font, **layout)
     cw = cb[2] - cb[0]
     bdraw.text(
-        ((WIDTH - cw) / 2, HEIGHT - 76),
+        ((WIDTH - cw) / 2, HEIGHT - int(76 * scale)),
         channel,
         font=channel_font,
         fill=BRAND_SECONDARY + (225,),
@@ -84,36 +86,53 @@ def render_frame_task(task_args: Tuple) -> Tuple[int, bytes]:
         draw = ImageDraw.Draw(text_layer)
         layout = text_layout_kwargs()
 
-        box_w = WIDTH * 0.72
+        box_w = WIDTH * (0.82 if HEIGHT > WIDTH else 0.72)
         shaped_main = shape_arabic(f"« {main_text} »")
-        font_size = 54
+        font_size = max(18, int(54 * scale))
         font_main = load_font(font_size)
-        bbox = draw.textbbox((0, 0), shaped_main, font=font_main, **layout)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        max_w = box_w - 100
+        max_w = box_w - int(100 * scale)
 
-        while tw > max_w and font_size > 20:
+        def wrap_text(font):
+            lines, current = [], ""
+            for word in shaped_main.split():
+                trial = f"{current} {word}".strip()
+                bounds = draw.textbbox((0, 0), trial, font=font, **layout)
+                if current and bounds[2] - bounds[0] > max_w:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = trial
+            if current:
+                lines.append(current)
+            return "\n".join(lines)
+
+        display_text = wrap_text(font_main)
+        bbox = draw.multiline_textbbox((0, 0), display_text, font=font_main, spacing=8, **layout)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        while len(display_text.splitlines()) > 5 and font_size > 18:
             font_size -= 2
             font_main = load_font(font_size)
-            bbox = draw.textbbox((0, 0), shaped_main, font=font_main, **layout)
+            display_text = wrap_text(font_main)
+            bbox = draw.multiline_textbbox((0, 0), display_text, font=font_main, spacing=8, **layout)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
         alpha_val = int(255 * text_opacity)
         cx, cy = WIDTH / 2, HEIGHT / 2 - 25
-        draw.text(
+        draw.multiline_text(
             (cx - tw / 2, cy - th / 2),
-            shaped_main,
+            display_text,
             font=font_main,
             fill=TEXT_COLOR + (alpha_val,),
+            spacing=8,
             **layout,
         )
 
         shaped_info = shape_arabic(info_text)
-        font_info = load_font(24)
+        font_info = load_font(max(16, int(24 * scale)))
         ibbox = draw.textbbox((0, 0), shaped_info, font=font_info, **layout)
         iw = ibbox[2] - ibbox[0]
         draw.text(
-            (cx - iw / 2, cy + th / 2 + 28),
+            (cx - iw / 2, cy + th / 2 + int(28 * scale)),
             shaped_info,
             font=font_info,
             fill=INFO_COLOR + (alpha_val,),

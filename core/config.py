@@ -3,7 +3,8 @@
 import os
 from dataclasses import dataclass
 
-WIDTH, HEIGHT = 1920, 1080
+WIDTH = int(os.environ.get("VIDEO_WIDTH", "1920"))
+HEIGHT = int(os.environ.get("VIDEO_HEIGHT", "1080"))
 FPS = 30
 RESVG_BIN = os.environ.get("RESVG_BIN", "resvg")
 
