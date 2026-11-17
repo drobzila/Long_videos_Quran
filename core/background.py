@@ -42,6 +42,7 @@ def load_colored_motif(svg_path: str, color=PATTERN_COLOR, size=1024) -> Image.I
 
 
 def build_base_cached_background(w, h) -> Image.Image:
+    scale = w / 1920
     img = Image.new("RGBA", (w, h))
     draw = ImageDraw.Draw(img)
 
@@ -53,8 +54,8 @@ def build_base_cached_background(w, h) -> Image.Image:
         draw.line([(0, y), (w, y)], fill=(r, g, b, 255))
 
     # لمسات هادئة جدًا أعلى وأسفل الشاشة للحفاظ على البساطة مع هوية واضحة.
-    draw.line([(220, 92), (1700, 92)], fill=BRAND_COLOR + (45,), width=2)
-    draw.line([(220, h - 92), (1700, h - 92)], fill=BRAND_COLOR + (30,), width=2)
+    draw.line([(int(220 * scale), int(92 * scale)), (int(w - 220 * scale), int(92 * scale))], fill=BRAND_COLOR + (45,), width=max(1, int(2 * scale)))
+    draw.line([(int(220 * scale), h - int(92 * scale)), (int(w - 220 * scale), h - int(92 * scale))], fill=BRAND_COLOR + (30,), width=max(1, int(2 * scale)))
 
     box_w, box_h = w * 0.72, h * 0.30
     x0 = (w - box_w) / 2
@@ -65,7 +66,7 @@ def build_base_cached_background(w, h) -> Image.Image:
     sdraw = ImageDraw.Draw(shadow_layer)
     sdraw.rounded_rectangle(
         (x0, y0 + 14, x0 + box_w, y0 + box_h + 14),
-        radius=BOX_RADIUS,
+        radius=max(8, int(BOX_RADIUS * scale)),
         fill=(20, 60, 25, 90),
     )
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(22))
@@ -75,10 +76,10 @@ def build_base_cached_background(w, h) -> Image.Image:
     bdraw = ImageDraw.Draw(box_layer)
     bdraw.rounded_rectangle(
         box_rect,
-        radius=BOX_RADIUS,
+        radius=max(8, int(BOX_RADIUS * scale)),
         fill=BOX_FILL,
         outline=BOX_BORDER,
-        width=BOX_BORDER_WIDTH,
+        width=max(1, int(BOX_BORDER_WIDTH * scale)),
     )
     img.alpha_composite(box_layer)
     return img
